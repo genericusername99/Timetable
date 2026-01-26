@@ -5,16 +5,16 @@ main.py
 
   ↓
 
-excel_export.py  → liest Excel
+excel_export.py     →       read excel
 
   ↓
 
-model.py         → saubere Datenobjekte
+model.py            →       envoke data structures
 
   ↓
 
-solver.py        → OR-Tools rechnet
+solver.py           →       use OR-tools 
 
   ↓
 
-excel_export.py  → schreibt Ergebnis
+excel_export.py     →       export results to excel
