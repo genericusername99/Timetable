@@ -2,36 +2,58 @@
 Solve problem with OR-tools, Define Constraints, (export solutions?) -> NO EXCEL DEPENDENCIES!!!!
 """
 from ortools.sat.python import cp_model
+from timetable.model import Teacher
 
-# create model
-model = cp_model.CpModel()
 
-# timeslots
-time_slots = [1, 2, 3]
+class TimetableSolver:
+    def __init__(self, teachers: list[Teacher], time_slots: list[int]):
+        self.teachers = teachers
+        self.time_slots = time_slots
+        self.model = cp_model.CpModel()
+        self.x = {}  # Entscheidungsvariablen
 
-# variable: lesson in slot t?
-x = {
-    t: model.NewBoolVar(f"math_in_slot_{t}")
-    for t in time_slots
-}
+    def build_model(self):
+        """
+        Erstellt die Entscheidungsvariablen und Constraints
+        """
 
-# constraint 1: exactly one slot
-model.Add(sum(x[t] for t in time_slots) == 1)
+        # Entscheidungsvariablen:
+        # x[(teacher_id, timeslot)] = 1, wenn Lehrer in diesem Slot unterrichtet
+        for teacher in self.teachers:
+            for t in self.time_slots:
+                self.x[(teacher.id, t)] = self.model.NewBoolVar(
+                    f"x_{teacher.id}_{t}"
+                )
 
-# constraint 2: teacher only avaiable in 1 and 3
-availability = {1, 3}
-for t in time_slots:
-    if t not in availability:
-        model.Add(x[t] == 0)
+        # Constraint 1: Jeder Lehrer unterrichtet GENAU 1 Stunde (POC!)
+        for teacher in self.teachers:
+            self.model.Add(
+                sum(self.x[(teacher.id, t)] for t in self.time_slots) == 1
+            )
 
-# solver
-solver = cp_model.CpSolver()
-status = solver.Solve(model)
+        # Constraint 2: Lehrer nur in verfügbaren Slots
+        for teacher in self.teachers:
+            for t in self.time_slots:
+                if t not in teacher.availability:
+                    self.model.Add(self.x[(teacher.id, t)] == 0)
 
-# result
-if status == cp_model.OPTIMAL:
-    for t in time_slots:
-        if solver.Value(x[t]) == 1:
-            print(f"Mathe findet in Slot {t} statt")
-else:
-    print("Keine Lösung gefunden")
+        # Constraint 3: Max. Wochenstunden (hier trivial, aber wichtig)
+        for teacher in self.teachers:
+            self.model.Add(
+                sum(self.x[(teacher.id, t)] for t in self.time_slots)
+                <= teacher.max_weekly_hours
+            )
+
+    def solve(self):
+        solver = cp_model.CpSolver()
+        status = solver.Solve(self.model)
+
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return None
+
+        result = {}
+        for (teacher_id, t), var in self.x.items():
+            if solver.Value(var) == 1:
+                result.setdefault(teacher_id, []).append(t)
+
+        return result
