@@ -1,10 +1,10 @@
 """
 Test corner cases and simple problems automatically. 
-E.g. [1 class, 1 teacher, 1 sublect -> desired solution], [1 class, 0 teacher, 1 subject -> no possible solution]
 """
 from timetable.model import Teacher
 from timetable.enums.teacher_role import TeacherRole
 from timetable.solver import TimetableSolver
+from timetable.constants import TIME_SLOTS
 
 
 def test_single_teacher_single_lesson():
@@ -13,14 +13,14 @@ def test_single_teacher_single_lesson():
         id="frabai",
         name="Franziska Baißbiel",
         subjects={"Mathe"},
-        max_weekly_hours=5,
-        availability={1, 2, 3},
+        max_weekly_hours=len(TIME_SLOTS),
+        availability=set(TIME_SLOTS),
         role=TeacherRole.FULL,
         is_homeroom_teacher=True,
         homeroom_class="1a",
     )
 
-    time_slots = [1, 2, 3]
+    time_slots = TIME_SLOTS
 
     solver = TimetableSolver(
         teachers=[teacher],
@@ -51,8 +51,8 @@ def test_multiple_teachers_all_slots_covered():
         id="frabai",
         name="Franziska Baißbiel",
         subjects={"Mathe"},
-        max_weekly_hours=1,
-        availability={1, 3},
+        max_weekly_hours=len(TIME_SLOTS),
+        availability = set(TIME_SLOTS) - {"Mo1", "Mo2", "Mo3", "Mo4"},
         role=TeacherRole.FULL,
         is_homeroom_teacher=True,
         homeroom_class="1a",
@@ -63,7 +63,7 @@ def test_multiple_teachers_all_slots_covered():
         name="Basel Lula",
         subjects={"Geschichte", "Sport"},
         max_weekly_hours=2,
-        availability={2, 3, 4},
+        availability={"Mo2", "Mo4"},
         role=TeacherRole.PART_TIME,
         is_homeroom_teacher=False,
         homeroom_class=None,
@@ -73,15 +73,15 @@ def test_multiple_teachers_all_slots_covered():
         id="rosa",
         name="Robin Salzmann",
         subjects={"Geschichte", "MNK"},
-        max_weekly_hours=1,
-        availability={2, 3, 4},
+        max_weekly_hours=2,
+        availability={"Mo1", "Mo3"},
         role=TeacherRole.PART_TIME,
         is_homeroom_teacher=False,
         homeroom_class=None,
     )
 
     teachers = [teacher1, teacher2, teacher3]
-    time_slots = [1, 2, 3, 4]
+    time_slots = TIME_SLOTS
 
     solver = TimetableSolver(teachers, time_slots)
     solver.build_model()
