@@ -11,7 +11,7 @@ from pathlib import Path
 
 from timetable.constants import TIME_SLOTS
 from timetable.excel_export import (
-    export_class_schedule_to_excel,
+    export_colored_class_schedule_to_excel,
     load_classes_from_excel,
     load_teachers_from_excel,
 )
@@ -57,7 +57,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("All classes fully staffed for their required subject hours.")
 
-    export_class_schedule_to_excel(result, TIME_SLOTS, args.output, subject_shortfall=solver.subject_shortfall)
+    export_colored_class_schedule_to_excel(
+        result, teachers, classes, TIME_SLOTS, args.output, subject_shortfall=solver.subject_shortfall
+    )
     print(f"Timetable written to: {args.output}")
     return 0
 
