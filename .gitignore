@@ -10,6 +10,7 @@ __pycache__/
 # Virtual Environment
 # =========================
 .venv/
+.venv-*/
 venv/
 ENV/
 env/
@@ -45,3 +46,4 @@ Thumbs.db
 # =========================
 ~$*.xlsx
 *.tmp
+data/timetable_output.xlsx

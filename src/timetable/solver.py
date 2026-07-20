@@ -6,7 +6,7 @@ from timetable.model import Teacher
 
 
 class TimetableSolver:
-    def __init__(self, teachers: list[Teacher], time_slots: list[int]):
+    def __init__(self, teachers: list[Teacher], time_slots: list[str]):
         self.teachers = teachers
         self.time_slots = time_slots
         self.model = cp_model.CpModel()
