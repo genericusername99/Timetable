@@ -18,3 +18,8 @@ solver.py           →       use OR-tools
   ↓
 
 excel_export.py     →       export results to excel
+
+
+For execution always use "wsl" to start wsl in my powershell and then "source .venv/bin/activate" to activate the environment.
+
+Tests can then be run by "pytest"
