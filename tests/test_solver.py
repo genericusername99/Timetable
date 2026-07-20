@@ -1,162 +1,144 @@
 """
-Test corner cases and simple problems automatically. 
+Test corner cases and simple problems automatically.
 """
-from timetable.model import Teacher
+from timetable.model import SchoolClass, Teacher
 from timetable.enums.teacher_role import TeacherRole
 from timetable.solver import TimetableSolver
-from timetable.constants import TIME_SLOTS, SLOT_WEIGHTS
+from timetable.constants import TIME_SLOTS
 
 
-def test_single_teacher_single_lesson():
-    # arrange
-    teacher = Teacher(
-        id="frabai",
-        name="Franziska Baißbiel",
-        subjects={"Mathe"},
-        max_weekly_hours=len(TIME_SLOTS),
-        availability=set(TIME_SLOTS),
+def make_teacher(id, subjects, availability=TIME_SLOTS, max_weekly_hours=None, is_homeroom_teacher=False, homeroom_class=None):
+    return Teacher(
+        id=id,
+        name=id,
+        subjects=set(subjects),
+        max_weekly_hours=max_weekly_hours if max_weekly_hours is not None else len(TIME_SLOTS),
+        availability=set(availability),
         role=TeacherRole.FULL,
-        is_homeroom_teacher=True,
-        homeroom_class="1a",
+        is_homeroom_teacher=is_homeroom_teacher,
+        homeroom_class=homeroom_class,
     )
 
-    time_slots = TIME_SLOTS
 
-    solver = TimetableSolver(
-        teachers=[teacher],
-        time_slots=time_slots
+def test_class_gets_required_hours_from_own_homeroom_teacher():
+    teacher = make_teacher(
+        "frabai", subjects={"D", "M"}, is_homeroom_teacher=True, homeroom_class="1a"
     )
+    school_class = SchoolClass(
+        id="1a", name="1a", number_of_students=20, required_subjects={"D": 3, "M": 2}
+    )
+
+    solver = TimetableSolver([teacher], [school_class], TIME_SLOTS)
     solver.build_model()
-
-    # act
     result = solver.solve()
 
-    # Check solution first
-    result = solver.solve()
-    assert result is not None, "Solver konnte keinen gültigen Stundenplan finden"
-
-
-    # Print Lösung für Sichtprüfung
-    print("\nSolver Ergebnis:")
-    for teacher_id, slots in result.items():
-        print(f"{teacher_id}: {slots}")
-
-    # assert
     assert result is not None
-    assert "frabai" in result
+    assert solver.subject_shortfall == {}
+
+    lessons = result["1a"]
+    assert sum(1 for subject, teacher_id in lessons.values() if subject == "D") == 3
+    assert sum(1 for subject, teacher_id in lessons.values() if subject == "M") == 2
+    assert all(teacher_id == "frabai" for _, teacher_id in lessons.values())
 
 
-def test_multiple_teachers_all_slots_covered():
-    teacher1 = Teacher(
-        id="frabai",
-        name="Franziska Baißbiel",
-        subjects={"Mathe"},
-        max_weekly_hours=len(TIME_SLOTS),
-        availability = set(TIME_SLOTS) - {"Mo1", "Mo2", "Mo3", "Mo4"},
-        role=TeacherRole.FULL,
-        is_homeroom_teacher=True,
-        homeroom_class="1a",
+def test_shortfall_when_no_qualified_teacher_available():
+    teacher = make_teacher(
+        "frabai", subjects={"D"}, is_homeroom_teacher=True, homeroom_class="1a"
+    )
+    school_class = SchoolClass(
+        id="1a", name="1a", number_of_students=20, required_subjects={"D": 2, "Rel": 2}
     )
 
-    teacher2 = Teacher(
-        id="balu",
-        name="Basel Lula",
-        subjects={"Geschichte", "Sport"},
-        max_weekly_hours=2,
-        availability={"Mo2", "Mo4"},
-        role=TeacherRole.PART_TIME,
-        is_homeroom_teacher=False,
-        homeroom_class=None,
-    )
-
-    teacher3 = Teacher(
-        id="rosa",
-        name="Robin Salzmann",
-        subjects={"Geschichte", "MNK"},
-        max_weekly_hours=2,
-        availability={"Mo1", "Mo3"},
-        role=TeacherRole.PART_TIME,
-        is_homeroom_teacher=False,
-        homeroom_class=None,
-    )
-
-    teachers = [teacher1, teacher2, teacher3]
-    time_slots = TIME_SLOTS
-
-    solver = TimetableSolver(teachers, time_slots)
+    solver = TimetableSolver([teacher], [school_class], TIME_SLOTS)
     solver.build_model()
     result = solver.solve()
 
-    # Check solution first
-    result = solver.solve()
-    assert result is not None, "Solver konnte keinen gültigen Stundenplan finden"
-
-    print("\nSolver Ergebnis:")
-    for teacher_id, slots in result.items():
-        print(f"{teacher_id}: {slots}")
-
-    # Alle Slots abgedeckt?
-    covered_slots = set()
-    for slots in result.values():
-        covered_slots.update(slots)
-
-    assert set(time_slots) == covered_slots
-
-    # Assert: jeder Lehrer bekommt Slots in seiner Availability
     assert result is not None
-    for teacher in teachers:
-        assert teacher.id in result
-        for slot in result[teacher.id]:
-            assert slot in teacher.availability
+    assert solver.subject_shortfall == {("1a", "Rel"): 2}
+    lessons = result["1a"]
+    assert sum(1 for subject, _ in lessons.values() if subject == "D") == 2
+    assert all(subject != "Rel" for subject, _ in lessons.values())
 
 
-def test_solver_returns_best_fit_when_demand_exceeds_supply():
-    # Only one teacher, available for a single slot out of the whole week.
-    teacher = Teacher(
-        id="frabai",
-        name="Franziska Baißbiel",
-        subjects={"Mathe"},
-        max_weekly_hours=1,
-        availability={"Mo1"},
-        role=TeacherRole.FULL,
-        is_homeroom_teacher=True,
-        homeroom_class="1a",
+def test_specialist_teacher_covers_subject_across_classes():
+    # Mirrors the real setup: one teacher qualified ONLY for "Rel", homeroom
+    # teachers qualified for everything except "Rel" -- the specialist should
+    # end up covering "Rel" for every class that needs it, purely from the
+    # qualification constraint (no separate specialist field).
+    specialist = make_teacher("spaeth", subjects={"Rel"})
+    homeroom_a = make_teacher(
+        "teacher_a", subjects={"D", "M"}, is_homeroom_teacher=True, homeroom_class="2a"
     )
+    homeroom_b = make_teacher(
+        "teacher_b", subjects={"D", "M"}, is_homeroom_teacher=True, homeroom_class="2b"
+    )
+    class_a = SchoolClass(id="2a", name="2a", number_of_students=20, required_subjects={"Rel": 2})
+    class_b = SchoolClass(id="2b", name="2b", number_of_students=20, required_subjects={"Rel": 2})
 
-    solver = TimetableSolver(teachers=[teacher], time_slots=TIME_SLOTS)
+    solver = TimetableSolver([specialist, homeroom_a, homeroom_b], [class_a, class_b], TIME_SLOTS)
     solver.build_model()
     result = solver.solve()
 
-    # Best-fit: still returns a schedule instead of giving up with None.
-    assert result is not None
-    assert result["frabai"] == ["Mo1"]
+    assert solver.subject_shortfall == {}
+    for class_id in ("2a", "2b"):
+        lessons = result[class_id]
+        assert len(lessons) == 2
+        assert all(teacher_id == "spaeth" for _, teacher_id in lessons.values())
 
-    # Everything else is reported as unresolved rather than making the model infeasible.
-    assert set(solver.unresolved_slots) == set(TIME_SLOTS) - {"Mo1"}
 
-
-def test_solver_prioritises_core_hours_over_afternoon_slots():
-    # Available for one core slot and one afternoon slot, but can only take one.
-    teacher = Teacher(
-        id="frabai",
-        name="Franziska Baißbiel",
-        subjects={"Mathe"},
-        max_weekly_hours=1,
-        availability={"Mo1", "MoNU"},
-        role=TeacherRole.FULL,
-        is_homeroom_teacher=True,
-        homeroom_class="1a",
+def test_gym_only_used_by_one_class_at_a_time():
+    teacher_a = make_teacher(
+        "teacher_a", subjects={"Sp"}, is_homeroom_teacher=True, homeroom_class="1a"
     )
-
-    time_slots = ["Mo1", "MoNU"]
-    solver = TimetableSolver(
-        teachers=[teacher],
-        time_slots=time_slots,
-        slot_weights=SLOT_WEIGHTS,
+    teacher_b = make_teacher(
+        "teacher_b", subjects={"Sp"}, is_homeroom_teacher=True, homeroom_class="1b"
     )
+    class_a = SchoolClass(id="1a", name="1a", number_of_students=20, required_subjects={"Sp": 4})
+    class_b = SchoolClass(id="1b", name="1b", number_of_students=20, required_subjects={"Sp": 4})
+
+    solver = TimetableSolver([teacher_a, teacher_b], [class_a, class_b], TIME_SLOTS)
     solver.build_model()
     result = solver.solve()
 
-    # Core hour ("Mo1") should be filled, afternoon ("MoNU") left uncovered.
-    assert result["frabai"] == ["Mo1"]
-    assert solver.unresolved_slots == ["MoNU"]
+    for slot in TIME_SLOTS:
+        classes_in_gym = sum(
+            1
+            for class_id in ("1a", "1b")
+            if slot in result.get(class_id, {}) and result[class_id][slot][0] == "Sp"
+        )
+        assert classes_in_gym <= 1
+
+
+def test_teacher_never_double_booked_across_classes():
+    shared_teacher = make_teacher("shared", subjects={"D"}, max_weekly_hours=3)
+    class_a = SchoolClass(id="1a", name="1a", number_of_students=20, required_subjects={"D": 3})
+    class_b = SchoolClass(id="1b", name="1b", number_of_students=20, required_subjects={"D": 3})
+
+    solver = TimetableSolver([shared_teacher], [class_a, class_b], TIME_SLOTS)
+    solver.build_model()
+    result = solver.solve()
+
+    for slot in TIME_SLOTS:
+        classes_taught = sum(
+            1
+            for class_id in ("1a", "1b")
+            if slot in result.get(class_id, {}) and result[class_id][slot][1] == "shared"
+        )
+        assert classes_taught <= 1
+
+
+def test_homeroom_teacher_preferred_over_other_qualified_teacher():
+    homeroom = make_teacher(
+        "homeroom", subjects={"D"}, is_homeroom_teacher=True, homeroom_class="1a"
+    )
+    other = make_teacher("other", subjects={"D"})
+    school_class = SchoolClass(
+        id="1a", name="1a", number_of_students=20, required_subjects={"D": 3}
+    )
+
+    solver = TimetableSolver([homeroom, other], [school_class], TIME_SLOTS)
+    solver.build_model()
+    result = solver.solve()
+
+    lessons = result["1a"]
+    assert all(teacher_id == "homeroom" for _, teacher_id in lessons.values())

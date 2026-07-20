@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from timetable.excel_export import export_schedule_to_excel, load_teachers_from_excel
+from timetable.excel_export import (
+    export_schedule_to_excel,
+    load_classes_from_excel,
+    load_teachers_from_excel,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_ENTRY_PATH = PROJECT_ROOT / "data" / "example_entry.xlsx"
@@ -14,21 +18,41 @@ EXAMPLE_ENTRY_PATH = PROJECT_ROOT / "data" / "example_entry.xlsx"
 def test_load_teachers_from_excel_reads_real_file():
     teachers = load_teachers_from_excel(str(EXAMPLE_ENTRY_PATH))
 
-    assert len(teachers) == 3
+    assert len(teachers) == 9
 
-    frabai = next(t for t in teachers if t.id == "frabai")
-    assert frabai.name == "Franziska Baißbiel"
-    assert frabai.subjects == {"Deutsch", "Mathe", "Sport"}
-    assert frabai.max_weekly_hours == 25
-    assert frabai.availability == {"Mo1", "Mo2", "Mo3", "Mo4", "Mo5", "Mo6", "Di1"}
-    assert frabai.is_homeroom_teacher is True
-    assert frabai.homeroom_class == "1a"
+    homeroom_teachers = {t.homeroom_class: t for t in teachers if t.is_homeroom_teacher}
+    assert set(homeroom_teachers) == {"1a", "1b", "2a", "2b", "3a", "3b", "4a", "4b"}
 
-    balu = next(t for t in teachers if t.id == "balu")
-    assert balu.max_weekly_hours == 12
-    assert balu.availability == {"Mo1", "Mo2", "Mo3", "Mo4", "Mo5"}
-    assert balu.is_homeroom_teacher is False
-    assert balu.homeroom_class is None
+    class_1a_teacher = homeroom_teachers["1a"]
+    assert class_1a_teacher.id == "S-R"
+    assert class_1a_teacher.subjects == {
+        "D", "M/LB", "SU", "M", "Sp", "E", "TW", "BK", "Mus", "D/L",
+    }
+    assert class_1a_teacher.max_weekly_hours == 30
+    assert len(class_1a_teacher.availability) == 35
+
+    specialist = next(t for t in teachers if t.id == "Späth")
+    assert specialist.subjects == {"Rel"}
+    assert specialist.max_weekly_hours == 31
+    assert specialist.is_homeroom_teacher is False
+    assert specialist.homeroom_class is None
+
+
+def test_load_classes_from_excel_reads_real_file():
+    classes = load_classes_from_excel(str(EXAMPLE_ENTRY_PATH))
+
+    assert len(classes) == 8
+    class_ids = {c.id for c in classes}
+    assert class_ids == {"1a", "1b", "2a", "2b", "3a", "3b", "4a", "4b"}
+
+    class_1a = next(c for c in classes if c.id == "1a")
+    assert class_1a.required_subjects == {
+        "D": 6, "M/LB": 2, "SU": 3, "M": 4, "BK": 1, "Mus": 1, "Sp": 2, "D/L": 1,
+    }
+
+    class_2a = next(c for c in classes if c.id == "2a")
+    assert class_2a.required_subjects["Rel"] == 2
+    assert class_2a.required_subjects["TW"] == 1
 
 
 def test_export_schedule_to_excel_creates_grid(tmp_path):
