@@ -13,7 +13,7 @@ class Teacher:
 
     subjects: set[str]
     max_weekly_hours: int
-    availability: set[int] # Define IDs (i.e. Mo1=0, Mo2=1, ...)
+    availability: set[str]  # slot IDs from constants.TIME_SLOTS (e.g. "Mo1", "Di3")
     
     role: TeacherRole
     

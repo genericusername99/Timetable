@@ -24,7 +24,7 @@ def load_teachers_from_excel(path: str) -> list[Teacher]:
 
             subjects={s.strip() for s in row["subjects"].split(",")},
             max_weekly_hours=int(row["max_weekly_hours"]),
-            availability={int(x) for x in row["availability"].split(",")},
+            availability={s.strip() for s in row["availability"].split(",")},
 
             role=TeacherRole(row["role"]),
 
