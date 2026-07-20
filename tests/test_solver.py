@@ -4,7 +4,7 @@ Test corner cases and simple problems automatically.
 from timetable.model import Teacher
 from timetable.enums.teacher_role import TeacherRole
 from timetable.solver import TimetableSolver
-from timetable.constants import TIME_SLOTS
+from timetable.constants import TIME_SLOTS, SLOT_WEIGHTS
 
 
 def test_single_teacher_single_lesson():
@@ -108,3 +108,55 @@ def test_multiple_teachers_all_slots_covered():
         assert teacher.id in result
         for slot in result[teacher.id]:
             assert slot in teacher.availability
+
+
+def test_solver_returns_best_fit_when_demand_exceeds_supply():
+    # Only one teacher, available for a single slot out of the whole week.
+    teacher = Teacher(
+        id="frabai",
+        name="Franziska Baißbiel",
+        subjects={"Mathe"},
+        max_weekly_hours=1,
+        availability={"Mo1"},
+        role=TeacherRole.FULL,
+        is_homeroom_teacher=True,
+        homeroom_class="1a",
+    )
+
+    solver = TimetableSolver(teachers=[teacher], time_slots=TIME_SLOTS)
+    solver.build_model()
+    result = solver.solve()
+
+    # Best-fit: still returns a schedule instead of giving up with None.
+    assert result is not None
+    assert result["frabai"] == ["Mo1"]
+
+    # Everything else is reported as unresolved rather than making the model infeasible.
+    assert set(solver.unresolved_slots) == set(TIME_SLOTS) - {"Mo1"}
+
+
+def test_solver_prioritises_core_hours_over_afternoon_slots():
+    # Available for one core slot and one afternoon slot, but can only take one.
+    teacher = Teacher(
+        id="frabai",
+        name="Franziska Baißbiel",
+        subjects={"Mathe"},
+        max_weekly_hours=1,
+        availability={"Mo1", "MoNU"},
+        role=TeacherRole.FULL,
+        is_homeroom_teacher=True,
+        homeroom_class="1a",
+    )
+
+    time_slots = ["Mo1", "MoNU"]
+    solver = TimetableSolver(
+        teachers=[teacher],
+        time_slots=time_slots,
+        slot_weights=SLOT_WEIGHTS,
+    )
+    solver.build_model()
+    result = solver.solve()
+
+    # Core hour ("Mo1") should be filled, afternoon ("MoNU") left uncovered.
+    assert result["frabai"] == ["Mo1"]
+    assert solver.unresolved_slots == ["MoNU"]

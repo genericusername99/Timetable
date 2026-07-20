@@ -45,6 +45,7 @@ def export_schedule_to_excel(
     result: dict[str, list[str]],
     time_slots: list[str],
     output_path: str,
+    unresolved_slots: list[str] | None = None,
 ) -> None:
     teacher_ids = sorted(result.keys())
 
@@ -52,6 +53,11 @@ def export_schedule_to_excel(
     for teacher_id, slots in result.items():
         for slot in slots:
             grid.loc[slot, teacher_id] = "X"
+
+    if unresolved_slots:
+        grid["Status"] = ""
+        for slot in unresolved_slots:
+            grid.loc[slot, "Status"] = "UNSTAFFED"
 
     grid.index.name = "Slot"
     grid.to_excel(output_path, sheet_name="Timetable")

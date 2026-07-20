@@ -51,3 +51,20 @@ def test_export_schedule_to_excel_creates_grid(tmp_path):
     assert df.loc["Mo2", "balu"] == "X"
     assert pd.isna(df.loc["Mo4", "frabai"]) or df.loc["Mo4", "frabai"] == ""
     assert pd.isna(df.loc["Mo1", "balu"]) or df.loc["Mo1", "balu"] == ""
+
+
+def test_export_schedule_to_excel_marks_unresolved_slots(tmp_path):
+    result = {"frabai": ["Mo1"]}
+    time_slots = ["Mo1", "Mo2", "Mo3"]
+    output_path = tmp_path / "schedule.xlsx"
+
+    export_schedule_to_excel(
+        result, time_slots, str(output_path), unresolved_slots=["Mo2", "Mo3"]
+    )
+
+    df = pd.read_excel(output_path, sheet_name="Timetable", index_col=0)
+
+    assert "Status" in df.columns
+    assert df.loc["Mo2", "Status"] == "UNSTAFFED"
+    assert df.loc["Mo3", "Status"] == "UNSTAFFED"
+    assert pd.isna(df.loc["Mo1", "Status"]) or df.loc["Mo1", "Status"] == ""

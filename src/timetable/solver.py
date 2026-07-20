@@ -6,11 +6,19 @@ from timetable.model import Teacher
 
 
 class TimetableSolver:
-    def __init__(self, teachers: list[Teacher], time_slots: list[str]):
+    def __init__(
+        self,
+        teachers: list[Teacher],
+        time_slots: list[str],
+        slot_weights: dict[str, int] | None = None,
+    ):
         self.teachers = teachers
         self.time_slots = time_slots
+        self.slot_weights = slot_weights or {slot: 1 for slot in time_slots}
         self.model = cp_model.CpModel()
         self.x = {}  # Entscheidungsvariablen
+        self.uncovered = {}  # slot -> BoolVar, 1 if no teacher could be assigned
+        self.unresolved_slots: list[str] = []
 
     def build_model(self):
         """
@@ -41,12 +49,22 @@ class TimetableSolver:
                 <= teacher.max_weekly_hours
             )
 
-        # every slot needs to be taken 
-        # TODO later this needs changing to prioritise core hours but can deviate from them if needed
+        # Every slot should be covered, but if supply can't meet demand, allow it to
+        # go uncovered rather than making the whole model infeasible. The objective
+        # below makes leaving a slot uncovered costly, weighted by slot_weights, so
+        # the solver approximates the best achievable coverage (prioritising core
+        # hours over afternoon slots, per slot_weights).
         for slot in self.time_slots:
+            self.uncovered[slot] = self.model.NewBoolVar(f"uncovered_{slot}")
             self.model.Add(
-                sum(self.x[(teacher.id, slot)] for teacher in self.teachers) >= 1
+                sum(self.x[(teacher.id, slot)] for teacher in self.teachers)
+                + self.uncovered[slot]
+                >= 1
             )
+
+        self.model.Minimize(
+            sum(self.slot_weights[slot] * self.uncovered[slot] for slot in self.time_slots)
+        )
 
     def solve(self):
         solver = cp_model.CpSolver()
@@ -59,5 +77,9 @@ class TimetableSolver:
         for (teacher_id, t), var in self.x.items():
             if solver.Value(var) == 1:
                 result.setdefault(teacher_id, []).append(t)
+
+        self.unresolved_slots = [
+            slot for slot in self.time_slots if solver.Value(self.uncovered[slot]) == 1
+        ]
 
         return result
