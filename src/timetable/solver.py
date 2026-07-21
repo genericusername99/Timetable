@@ -3,12 +3,16 @@ Solve problem with OR-tools, Define Constraints, (export solutions?) -> NO EXCEL
 """
 from ortools.sat.python import cp_model
 from timetable.model import SchoolClass, Teacher
+from timetable.constants import WEEKDAYS, AFTERNOON
 
 # Objective weights, staggered by an order of magnitude so a higher-priority
 # goal is never sacrificed to improve a lower-priority one: fulfilling required
 # subject hours matters far more than which qualified teacher ends up teaching it.
 SHORTFALL_WEIGHT = 10000
 NON_HOMEROOM_WEIGHT = 10
+
+# Regular lessons only run periods 1-5; the 6th hour is always left free.
+REGULAR_PERIODS = ["1", "2", "3", "4", "5"]
 
 
 class TimetableSolver:
@@ -46,12 +50,15 @@ class TimetableSolver:
         # that teacher teaches that class that subject at that slot. Only created
         # where the teacher is qualified, available, and the class actually needs
         # the subject -- this encodes qualification/availability directly instead
-        # of via separate == 0 constraints.
+        # of via separate == 0 constraints. Period 6 slots are skipped entirely so
+        # regular lessons can never be scheduled there.
         for teacher in self.teachers:
             for school_class in self.classes:
                 subjects = teacher.subjects & set(school_class.required_subjects)
                 for subject in subjects:
                     for slot in self.time_slots:
+                        if slot[2:] == "6":
+                            continue
                         if slot in teacher.availability:
                             self.assign[(teacher.id, school_class.id, subject, slot)] = (
                                 self.model.NewBoolVar(
@@ -117,6 +124,9 @@ class TimetableSolver:
             if vars_in_gym:
                 self.model.Add(sum(vars_in_gym) <= 1)
 
+        self._add_afternoon_constraints()
+        self._add_no_middle_gap_constraints()
+
         # Objective: minimise shortfall first (dominant weight), then prefer the
         # class's own homeroom teacher over any other qualified teacher.
         non_homeroom_vars = [
@@ -128,6 +138,75 @@ class TimetableSolver:
             SHORTFALL_WEIGHT * sum(self.shortfall.values())
             + NON_HOMEROOM_WEIGHT * sum(non_homeroom_vars)
         )
+
+    def _used_var(self, class_id: str, slot: str) -> cp_model.IntVar:
+        """A BoolVar equal to whether `class_id` has any lesson at `slot`."""
+        vars_at_slot = [
+            var
+            for (_, c_id, _, s), var in self.assign.items()
+            if c_id == class_id and s == slot
+        ]
+        used_var = self.model.NewBoolVar(f"used_{class_id}_{slot}")
+        if vars_at_slot:
+            self.model.Add(used_var == sum(vars_at_slot))
+        else:
+            self.model.Add(used_var == 0)
+        return used_var
+
+    def _add_afternoon_constraints(self):
+        """
+        Each class gets exactly one "NU" (afternoon) slot per week, and parallel
+        classes (same grade, e.g. "1a"/"1b") must share the same NU weekday --
+        which weekday that is stays free for the solver to pick.
+        """
+        nu_used = {
+            (school_class.id, day): self._used_var(school_class.id, f"{day}{AFTERNOON}")
+            for school_class in self.classes
+            for day in WEEKDAYS
+        }
+
+        for school_class in self.classes:
+            self.model.Add(
+                sum(nu_used[(school_class.id, day)] for day in WEEKDAYS) == 1
+            )
+
+        classes_by_grade: dict[str, list[str]] = {}
+        for school_class in self.classes:
+            classes_by_grade.setdefault(school_class.id[:-1], []).append(school_class.id)
+
+        for grade_class_ids in classes_by_grade.values():
+            anchor, *others = grade_class_ids
+            for other in others:
+                for day in WEEKDAYS:
+                    self.model.Add(nu_used[(anchor, day)] == nu_used[(other, day)])
+
+    def _add_no_middle_gap_constraints(self):
+        """
+        Within periods 1-5, a free period may only sit at the start or end of the
+        day -- never sandwiched between two used periods.
+        """
+        for school_class in self.classes:
+            for day in WEEKDAYS:
+                used = {
+                    period: self._used_var(school_class.id, f"{day}{period}")
+                    for period in REGULAR_PERIODS
+                }
+
+                for i, period in enumerate(REGULAR_PERIODS):
+                    before = REGULAR_PERIODS[:i]
+                    after = REGULAR_PERIODS[i + 1 :]
+                    if not before or not after:
+                        continue  # first/last period of the day may always be free
+
+                    any_before = self.model.NewBoolVar(f"any_before_{school_class.id}_{day}{period}")
+                    self.model.AddMaxEquality(any_before, [used[p] for p in before])
+
+                    any_after = self.model.NewBoolVar(f"any_after_{school_class.id}_{day}{period}")
+                    self.model.AddMaxEquality(any_after, [used[p] for p in after])
+
+                    # If there's a used period both before and after this one, it
+                    # cannot be free.
+                    self.model.Add(used[period] >= any_before + any_after - 1)
 
     def solve(self) -> dict[str, dict[str, tuple[str, str]]] | None:
         solver = cp_model.CpSolver()
