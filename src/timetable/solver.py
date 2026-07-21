@@ -7,8 +7,13 @@ from timetable.constants import WEEKDAYS, AFTERNOON
 
 # Objective weights, staggered by an order of magnitude so a higher-priority
 # goal is never sacrificed to improve a lower-priority one: fulfilling required
-# subject hours matters far more than which qualified teacher ends up teaching it.
+# subject hours matters far more than which qualified teacher ends up teaching
+# it, which in turn matters more than which specific teacher/subject occupies
+# an already-used slot -- but keeping the previous plan's used/free slot
+# pattern (so families don't have to reorganize pickup/dropoff times) matters
+# more than that.
 SHORTFALL_WEIGHT = 10000
+STABILITY_WEIGHT = 100
 NON_HOMEROOM_WEIGHT = 10
 
 # Regular lessons only run periods 1-5; the 6th hour is always left free.
@@ -22,16 +27,23 @@ class TimetableSolver:
         classes: list[SchoolClass],
         time_slots: list[str],
         gym_subject: str = "Sp",
+        old_schedule: dict[str, set[str]] | None = None,
     ):
         self.teachers = teachers
         self.classes = classes
         self.time_slots = time_slots
         self.gym_subject = gym_subject
+        # class_id -> set of slots that were used in a previous plan (same
+        # used/free slot per class, not which subject/teacher) -- optional,
+        # only applied when a previous plan is available to stay close to.
+        self.old_schedule = old_schedule or {}
         self.model = cp_model.CpModel()
 
         self.assign = {}  # (teacher_id, class_id, subject, slot) -> BoolVar
         self.shortfall = {}  # (class_id, subject) -> IntVar
         self.subject_shortfall: dict[tuple[str, str], int] = {}
+        self._used_vars: dict[tuple[str, str], cp_model.IntVar] = {}
+        self.stability_penalty_vars: list[cp_model.IntVar] = []
 
         self.homeroom_teacher_id = {
             teacher.homeroom_class: teacher.id
@@ -126,8 +138,11 @@ class TimetableSolver:
 
         self._add_afternoon_constraints()
         self._add_no_middle_gap_constraints()
+        if self.old_schedule:
+            self._add_stability_terms()
 
-        # Objective: minimise shortfall first (dominant weight), then prefer the
+        # Objective: minimise shortfall first (dominant weight), then prefer
+        # staying close to the previous plan's used/free slots, then prefer the
         # class's own homeroom teacher over any other qualified teacher.
         non_homeroom_vars = [
             var
@@ -136,11 +151,20 @@ class TimetableSolver:
         ]
         self.model.Minimize(
             SHORTFALL_WEIGHT * sum(self.shortfall.values())
+            + STABILITY_WEIGHT * sum(self.stability_penalty_vars)
             + NON_HOMEROOM_WEIGHT * sum(non_homeroom_vars)
         )
 
     def _used_var(self, class_id: str, slot: str) -> cp_model.IntVar:
-        """A BoolVar equal to whether `class_id` has any lesson at `slot`."""
+        """A BoolVar equal to whether `class_id` has any lesson at `slot`.
+
+        Cached per (class_id, slot) since several constraint groups (NU quota,
+        gap avoidance, stability) all need the same variable.
+        """
+        key = (class_id, slot)
+        if key in self._used_vars:
+            return self._used_vars[key]
+
         vars_at_slot = [
             var
             for (_, c_id, _, s), var in self.assign.items()
@@ -151,6 +175,7 @@ class TimetableSolver:
             self.model.Add(used_var == sum(vars_at_slot))
         else:
             self.model.Add(used_var == 0)
+        self._used_vars[key] = used_var
         return used_var
 
     def _add_afternoon_constraints(self):
@@ -207,6 +232,32 @@ class TimetableSolver:
                     # If there's a used period both before and after this one, it
                     # cannot be free.
                     self.model.Add(used[period] >= any_before + any_after - 1)
+
+    def _add_stability_terms(self):
+        """
+        Soft preference for keeping each class's used/free pattern the same as
+        in `self.old_schedule` -- e.g. a class's "NU" afternoon should stay on
+        the same weekday it was on before, and a day that ran periods 1-5
+        shouldn't shrink or grow, so families don't have to reorganize pickup
+        and dropoff. Which subject/teacher fills an already-used slot is free
+        to change ("shuffle the subjects, not the days").
+        """
+        for school_class in self.classes:
+            old_used_slots = self.old_schedule.get(school_class.id)
+            if not old_used_slots:
+                continue
+
+            for slot in self.time_slots:
+                if slot[2:] == "6":
+                    continue  # never assignable, nothing to stay stable about
+
+                used_var = self._used_var(school_class.id, slot)
+                mismatch = self.model.NewBoolVar(f"stability_mismatch_{school_class.id}_{slot}")
+                if slot in old_used_slots:
+                    self.model.Add(mismatch == 1 - used_var)
+                else:
+                    self.model.Add(mismatch == used_var)
+                self.stability_penalty_vars.append(mismatch)
 
     def solve(self) -> dict[str, dict[str, tuple[str, str]]] | None:
         solver = cp_model.CpSolver()

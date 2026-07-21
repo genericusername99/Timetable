@@ -3,7 +3,7 @@ Entry and exit point of all excel communication. Read in excel entry and export 
 """
 
 import pandas as pd
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
 
 from timetable.constants import AFTERNOON
@@ -17,6 +17,7 @@ WEEKDAY_NAMES = {
     "Do": "Donnerstag",
     "Fr": "Freitag",
 }
+WEEKDAY_CODES = {name: code for code, name in WEEKDAY_NAMES.items()}
 
 # Colors extracted from data/format.xlsx's teacher legend (two of them -- Knoell
 # and Spaeth -- used theme colors there; resolved here to their concrete RGB via
@@ -67,27 +68,82 @@ def load_teachers_from_excel(path: str) -> list[Teacher]:
     return teachers
 
 
-def load_classes_from_excel(path: str, sheet_name: str = "classes") -> list[SchoolClass]:
-    df = pd.read_excel(path, sheet_name=sheet_name)
+def load_classes_from_excel(
+    path: str,
+    sheet_name: str = "classes",
+    required_hours_sheet: str = "required_hours",
+) -> list[SchoolClass]:
+    """
+    Reads the class list (just IDs, sheet "classes") and the weekly hours each
+    grade requires per subject (sheet "required_hours": one row per
+    grade/subject/hours, e.g. so it's easy to add or remove a subject later
+    without touching any packed string). Parallel classes in the same grade
+    (e.g. "1a"/"1b") share the same requirements, looked up by grade.
+    """
+    classes_df = pd.read_excel(path, sheet_name=sheet_name)
+    hours_df = pd.read_excel(path, sheet_name=required_hours_sheet)
+
+    required_by_grade: dict[str, dict[str, int]] = {}
+    for _, row in hours_df.iterrows():
+        grade = str(row["grade"])
+        subject = str(row["subject"]).strip()
+        required_by_grade.setdefault(grade, {})[subject] = int(row["hours"])
 
     classes: list[SchoolClass] = []
-
-    for _, row in df.iterrows():
-        required_subjects = {}
-        for pair in row["required_subjects"].split(","):
-            subject, hours = pair.split(":")
-            required_subjects[subject.strip()] = int(hours)
+    for _, row in classes_df.iterrows():
+        class_id = str(row["class_id"])
+        grade = class_id[:-1]
 
         classes.append(
             SchoolClass(
-                id=str(row["class_id"]),
-                name=str(row["class_id"]),
+                id=class_id,
+                name=class_id,
                 number_of_students=0,
-                required_subjects=required_subjects,
+                required_subjects=dict(required_by_grade.get(grade, {})),
             )
         )
 
     return classes
+
+
+def load_old_schedule_from_excel(path: str, sheet_name: str = "Stundenplan") -> dict[str, set[str]]:
+    """
+    Reads a previously exported schedule (same layout as
+    export_colored_class_schedule_to_excel) and returns, per class, the set of
+    slots that had a lesson -- used to keep a new plan's used/free slot
+    pattern close to an existing, already-distributed plan instead of
+    reshuffling every family's daily schedule from scratch.
+    """
+    wb = load_workbook(path, data_only=True)
+    ws = wb[sheet_name]
+
+    day_by_column: dict[int, str] = {}
+    for merged_range in ws.merged_cells.ranges:
+        if merged_range.min_row == 1 and merged_range.max_row == 1:
+            weekday_name = ws.cell(row=1, column=merged_range.min_col).value
+            day_code = WEEKDAY_CODES.get(weekday_name)
+            if day_code:
+                for col in range(merged_range.min_col, merged_range.max_col + 1):
+                    day_by_column[col] = day_code
+
+    slot_by_column: dict[int, str] = {}
+    for col, day in day_by_column.items():
+        period = ws.cell(row=2, column=col).value
+        if period is not None:
+            slot_by_column[col] = f"{day}{period}"
+
+    old_schedule: dict[str, set[str]] = {}
+    for row in range(3, ws.max_row + 1):
+        class_id = ws.cell(row=row, column=2).value
+        if not class_id:
+            continue
+        old_schedule[str(class_id)] = {
+            slot
+            for col, slot in slot_by_column.items()
+            if ws.cell(row=row, column=col).value
+        }
+
+    return old_schedule
 
 
 def export_schedule_to_excel(
@@ -248,14 +304,6 @@ def export_colored_class_schedule_to_excel(
         color = teacher_color.get(teacher.id)
         if color:
             cell.fill = PatternFill("solid", fgColor=color)
-        row += 1
-
-    # Required-hours summary per grade, reconstructed from SchoolClass.required_subjects.
-    row += 1
-    for grade in sorted(classes_by_grade):
-        required_subjects = classes_by_grade[grade][0].required_subjects
-        summary = ", ".join(f"{hours}x{subject}" for subject, hours in required_subjects.items())
-        ws.cell(row=row, column=4, value=f"Klasse {grade}: {summary}")
         row += 1
 
     ws.column_dimensions["B"].width = 8

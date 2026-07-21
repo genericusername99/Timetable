@@ -12,6 +12,7 @@ from timetable.excel_export import (
     export_colored_class_schedule_to_excel,
     export_schedule_to_excel,
     load_classes_from_excel,
+    load_old_schedule_from_excel,
     load_teachers_from_excel,
 )
 from timetable.model import SchoolClass, Teacher
@@ -58,6 +59,11 @@ def test_load_classes_from_excel_reads_real_file():
     class_2a = next(c for c in classes if c.id == "2a")
     assert class_2a.required_subjects["Rel"] == 2
     assert class_2a.required_subjects["TW"] == 1
+
+    # Parallel classes share the same grade-level requirements (looked up from
+    # the "required_hours" table, not duplicated per class).
+    class_1b = next(c for c in classes if c.id == "1b")
+    assert class_1b.required_subjects == class_1a.required_subjects
 
 
 def test_export_schedule_to_excel_creates_grid(tmp_path):
@@ -154,3 +160,23 @@ def test_export_colored_class_schedule_to_excel_matches_format_style(tmp_path):
 
     # Späth has no class of her own, so she shows up in the legend section only.
     assert "Späth" in [row[0].value for row in ws.iter_rows(min_col=3, max_col=3) if row[0].value]
+
+    # Required-hours-per-grade is now only in the input file, not re-printed
+    # into the output.
+    all_values = [cell.value for row in ws.iter_rows() for cell in row]
+    assert not any(isinstance(v, str) and v.startswith("Klasse ") for v in all_values)
+
+
+def test_load_old_schedule_from_excel_round_trips_with_export(tmp_path):
+    homeroom = _make_teacher("S-R", {"D"}, is_homeroom_teacher=True, homeroom_class="1a")
+    teachers = [homeroom]
+    classes = [SchoolClass(id="1a", name="1a", number_of_students=20, required_subjects={"D": 2})]
+    schedule = {"1a": {"Mo1": ("D", "S-R"), "MoNU": ("D", "S-R")}}
+    time_slots = ["Mo1", "Mo2", "MoNU"]
+    output_path = tmp_path / "old_plan.xlsx"
+
+    export_colored_class_schedule_to_excel(schedule, teachers, classes, time_slots, str(output_path))
+
+    old_schedule = load_old_schedule_from_excel(str(output_path))
+
+    assert old_schedule["1a"] == {"Mo1", "MoNU"}

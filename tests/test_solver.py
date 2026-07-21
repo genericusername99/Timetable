@@ -259,3 +259,50 @@ def test_no_free_period_sandwiched_between_lessons():
     morning_slots_used = [slot for slot in lessons if slot in {"Mo1", "Mo3", "Mo5"}]
     assert len(morning_slots_used) <= 1
     assert solver.subject_shortfall.get(("1a", "D"), 0) >= 1
+
+
+def test_solver_prefers_keeping_previous_afternoon_day():
+    # A previous plan had this class's NU (afternoon) slot on Monday. With
+    # nothing else forcing a different day, the solver should keep Monday
+    # rather than picking arbitrarily -- "shuffle the subjects, not the days".
+    teacher = make_teacher(
+        "frabai", subjects={"D"}, is_homeroom_teacher=True, homeroom_class="1a"
+    )
+    school_class = SchoolClass(
+        id="1a", name="1a", number_of_students=20, required_subjects={"D": 5}
+    )
+    old_schedule = {"1a": {"MoNU"}}
+
+    solver = TimetableSolver([teacher], [school_class], TIME_SLOTS, old_schedule=old_schedule)
+    solver.build_model()
+    result = solver.solve()
+
+    assert result is not None
+    afternoon_slot = next(slot for slot in result["1a"] if slot.endswith("NU"))
+    assert afternoon_slot == "MoNU"
+
+
+def test_solver_falls_back_when_previous_afternoon_day_unavailable():
+    # The previous NU day (Monday) is no longer available to the teacher --
+    # the stability preference is soft, so the solver should still produce a
+    # schedule (just on a different day) instead of failing.
+    limited_availability = set(TIME_SLOTS) - {"MoNU"}
+    teacher = make_teacher(
+        "frabai",
+        subjects={"D"},
+        availability=limited_availability,
+        is_homeroom_teacher=True,
+        homeroom_class="1a",
+    )
+    school_class = SchoolClass(
+        id="1a", name="1a", number_of_students=20, required_subjects={"D": 5}
+    )
+    old_schedule = {"1a": {"MoNU"}}
+
+    solver = TimetableSolver([teacher], [school_class], TIME_SLOTS, old_schedule=old_schedule)
+    solver.build_model()
+    result = solver.solve()
+
+    assert result is not None
+    afternoon_slot = next(slot for slot in result["1a"] if slot.endswith("NU"))
+    assert afternoon_slot != "MoNU"

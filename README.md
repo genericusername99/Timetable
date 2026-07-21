@@ -27,6 +27,12 @@ that:
   weekday (which weekday it is is left for the solver to decide).
 - Within periods 1–5, a free period may only fall at the start or end of the
   day — never sandwiched between two used periods.
+- If a previous plan is supplied (`--old-plan`, same format as the output),
+  the solver prefers keeping each class's used/free slot pattern the same as
+  before — e.g. the NU weekday stays put — so families don't have to
+  reorganize pickup/dropoff times every run. Subjects/teachers within an
+  already-used slot are still free to change. This is a soft preference: it
+  yields if the old slot genuinely isn't available anymore.
 
 ## Data flow
 
@@ -46,9 +52,10 @@ main.py
   and solves it (`solve()`), returning `class_id → slot → (subject,
   teacher_id)` plus a `subject_shortfall` dict for any unmet hours.
 - `excel_export.py` — Excel I/O: `load_teachers_from_excel`,
-  `load_classes_from_excel`, and `export_colored_class_schedule_to_excel`
-  (per-teacher cell coloring, grade grouping, legend, required-hours summary
-  — styled after `data/format.xlsx`).
+  `load_classes_from_excel`, `load_old_schedule_from_excel` (reads a
+  previously exported schedule back in for the stability preference above),
+  and `export_colored_class_schedule_to_excel` (per-teacher cell coloring,
+  grade grouping, legend — styled after `data/format.xlsx`).
 - `main.py` — orchestrates the three steps above and handles CLI args /
   errors.
 
@@ -91,24 +98,47 @@ By default this reads `data/example_entry.xlsx` and writes
 PYTHONPATH=src python -m timetable.main --input path/to/input.xlsx --output path/to/output.xlsx
 ```
 
-## Building the standalone .exe
-
-For non-technical users, the app can be packaged into a single `.exe` that
-needs no Python install:
+To keep a new plan close to a previous one (see the stability preference
+above), pass it as `--old-plan`:
 
 ```
+PYTHONPATH=src python -m timetable.main --old-plan path/to/previous_output.xlsx
+```
+
+## Building the standalone .exe
+
+**Must be run from PowerShell with `.venv-win` active — not WSL.**
+PyInstaller always builds for the OS/environment it's currently running
+under. Running the build command from a WSL bash shell (even if it looks
+like it succeeds) silently produces a *Linux* binary at `dist/Timetable`
+(no `.exe` extension) and leaves the real `dist/Timetable.exe` completely
+untouched — so it'll look like nothing changed, and the Linux binary won't
+run on Windows at all.
+
+In a PowerShell terminal:
+
+```
+.venv-win\Scripts\Activate.ps1
 pyinstaller --onefile --name Timetable --paths src --collect-all ortools --clean --noconfirm src/timetable/main.py
 ```
 
+A fresh terminal always starts unactivated, so repeat the `Activate.ps1`
+step any time you open a new PowerShell window before building.
+
 This produces `dist/Timetable.exe`. When run directly (double-clicked), it
 looks for `input.xlsx` next to the exe and writes `output.xlsx` there —
-no `--input`/`--output` flags needed. The console window stays open after
-it finishes so the result is readable before closing it.
+no `--input`/`--output` flags needed. If an `old_plan.xlsx` also sits next
+to the exe, it's picked up automatically as the stability reference. The
+console window stays open after it finishes so the result is readable
+before closing it.
 
 **Rebuilding:** the exe is a manual build artifact — it does not update
 itself when the source changes. After making changes you want a
-distributed copy to have, rerun the command above and replace the old
-`Timetable.exe` with the new one.
+distributed copy to have, rerun the command above (from PowerShell, as
+above) and copy the new `dist/Timetable.exe` over the old one in
+`dist/for_mother/` (and refresh `dist/for_mother/input.xlsx` too if the
+input file's structure changed) — rebuilding alone doesn't update the
+distribution folder by itself.
 
 **Distributing:** put `Timetable.exe`, an `input.xlsx`, and a short
 usage note in one folder (see `dist/for_mother/` for an example) and
@@ -119,8 +149,11 @@ anyway".
 
 ## Data files
 
-- `data/example_entry.xlsx` — example/test input (teachers on the first
-  sheet, classes on the `"classes"` sheet).
+- `data/example_entry.xlsx` — example/test input: teachers on the first
+  sheet, class IDs on the `"classes"` sheet, and weekly required hours per
+  grade/subject on the `"required_hours"` sheet (one row per grade + subject
+  + hours — add/remove a row there to change requirements; parallel classes
+  in the same grade share these automatically).
 - `data/format.xlsx` — reference file showing the target output layout and
   coloring style.
 - `data/timetable_output.xlsx` — default dev-run output (gitignored).

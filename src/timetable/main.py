@@ -13,6 +13,7 @@ from timetable.constants import TIME_SLOTS
 from timetable.excel_export import (
     export_colored_class_schedule_to_excel,
     load_classes_from_excel,
+    load_old_schedule_from_excel,
     load_teachers_from_excel,
 )
 from timetable.solver import TimetableSolver
@@ -35,15 +36,26 @@ def _app_dir() -> Path:
 if getattr(sys, "frozen", False):
     DEFAULT_INPUT = _app_dir() / "input.xlsx"
     DEFAULT_OUTPUT = _app_dir() / "output.xlsx"
+    DEFAULT_OLD_PLAN = _app_dir() / "old_plan.xlsx"
 else:
     DEFAULT_INPUT = _app_dir() / "example_entry.xlsx"
     DEFAULT_OUTPUT = _app_dir() / "timetable_output.xlsx"
+    DEFAULT_OLD_PLAN = _app_dir() / "old_plan.xlsx"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a school timetable from an Excel input file.")
     parser.add_argument("--input", default=str(DEFAULT_INPUT), help="Path to the input Excel file with teacher and class data.")
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="Path to write the generated timetable Excel file.")
+    parser.add_argument(
+        "--old-plan",
+        default=None,
+        help=(
+            "Path to a previously exported schedule (same format as the output) to keep the new "
+            f"plan close to (which slots are used, not which subject/teacher). Defaults to "
+            f"'{DEFAULT_OLD_PLAN.name}' next to the input file if present, otherwise skipped."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -60,8 +72,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Failed to read input file '{args.input}': {e}")
         return 1
 
+    old_plan_path = args.old_plan
+    if old_plan_path is None and DEFAULT_OLD_PLAN.exists():
+        old_plan_path = str(DEFAULT_OLD_PLAN)
+
+    old_schedule = None
+    if old_plan_path:
+        try:
+            old_schedule = load_old_schedule_from_excel(old_plan_path)
+            print(f"Keeping close to previous plan: {old_plan_path}")
+        except FileNotFoundError:
+            print(f"Old plan file not found: {old_plan_path}")
+            return 1
+        except Exception as e:
+            print(f"Failed to read old plan file '{old_plan_path}': {e}")
+            return 1
+
     try:
-        solver = TimetableSolver(teachers, classes, TIME_SLOTS)
+        solver = TimetableSolver(teachers, classes, TIME_SLOTS, old_schedule=old_schedule)
         solver.build_model()
         result = solver.solve()
 
