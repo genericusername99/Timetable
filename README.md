@@ -27,3 +27,5 @@ Tests can then be run by "pytest"
 Application can be run by: "PYTHONPATH=src python -m timetable.main"
 
 TIPP: "claude --continue" to get claude back to where you stopped
+
+After every change distributed version for .exe needs to beupdated with: "pyinstaller --onefile --name Timetable --paths src --collect-all ortools --clean --noconfirm src/timetable/main.py"
